@@ -1,0 +1,120 @@
+-- Coloque este código em um LocalScript dentro de StarterPlayerScripts
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local estadoAtivo = true -- Estado inicial (ON)
+local conexoes = {}      -- Guarda conexões para atualizar caso o estado mude
+
+-- Guarda o tamanho e transparência originais de cada cabeça
+local tamanhosOriginais = {}
+local transparanciasOriginais = {}
+
+local function atualizarCabecaPlayer(player)
+	-- Ignora o próprio jogador local
+	if player == LocalPlayer then return end
+	
+	local character = player.Character
+	if not character then return end
+	
+	local head = character:WaitForChild("Head", 5)
+	if not head or not head:IsA("BasePart") then return end
+
+	-- Salva os valores originais se ainda não tiver salvado
+	if not tamanhosOriginais[head] then
+		tamanhosOriginais[head] = head.Size
+		transparanciasOriginais[head] = head.Transparency
+	end
+
+	if estadoAtivo then
+		-- Aplica a Hitbox Gigante
+		head.Size = Vector3.new(15, 15, 15)
+		head.Transparency = 0.6
+		head.CanCollide = false
+		head.Massless = true
+	else
+		-- Restaura o estado normal
+		if tamanhosOriginais[head] then
+			head.Size = tamanhosOriginais[head]
+		end
+		if transparanciasOriginais[head] then
+			head.Transparency = transparanciasOriginais[head]
+		end
+		head.Massless = false
+	end
+end
+
+local function monitorarJogador(player)
+	if player == LocalPlayer then return end
+
+	if player.Character then
+		task.spawn(function()
+			atualizarCabecaPlayer(player)
+		end)
+	end
+
+	player.CharacterAdded:Connect(function(character)
+		task.wait(0.1)
+		atualizarCabecaPlayer(player)
+	end)
+end
+
+-- Monitora todos os jogadores (exceto você)
+for _, player in ipairs(Players:GetPlayers()) do
+	monitorarJogador(player)
+end
+
+Players.PlayerAdded:Connect(function(player)
+	monitorarJogador(player)
+end)
+
+-- =======================================================
+-- CRIAÇÃO DA INTERFACE DO BOTÃO (GUI) NO CANTO SUPERIOR ESQUERDO
+-- =======================================================
+local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Remove GUI antiga se já existir
+local screenGuiAntiga = playerGui:FindFirstChild("HitboxGui")
+if screenGuiAntiga then
+	screenGuiAntiga:Destroy()
+end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "HitboxGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+local botao = Instance.new("TextButton")
+botao.Name = "ToggleHitboxButton"
+botao.Size = UDim2.new(0, 160, 0, 45)
+botao.Position = UDim2.new(0, 15, 0, 15) -- Canto superior esquerdo
+botao.BackgroundColor3 = Color3.fromRGB(35, 140, 35) -- Verde inicial
+botao.TextColor3 = Color3.fromRGB(255, 255, 255)
+botao.TextSize = 14
+botao.Font = Enum.Font.SourceSansBold
+botao.Text = "HEAD HITBOX: ON"
+botao.Parent = screenGui
+
+-- Arredonda os cantos do botão
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0, 8)
+uiCorner.Parent = botao
+
+-- Alterna o estado (ON / OFF) ao clicar
+botao.MouseButton1Click:Connect(function()
+	estadoAtivo = not estadoAtivo
+	
+	if estadoAtivo then
+		botao.Text = "HEAD HITBOX: ON"
+		botao.BackgroundColor3 = Color3.fromRGB(35, 140, 35) -- Verde
+	else
+		botao.Text = "HEAD HITBOX: OFF"
+		botao.BackgroundColor3 = Color3.fromRGB(180, 40, 40) -- Vermelho
+	end
+
+	-- Aplica a alteração para todos os outros jogadores
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer then
+			atualizarCabecaPlayer(player)
+		end
+	end
+end)
