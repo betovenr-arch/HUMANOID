@@ -1,64 +1,102 @@
 -- Coloque este código em um LocalScript dentro de StarterPlayerScripts
 local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 
-local estadoAtivo = true -- Estado inicial (ON)
-local conexoes = {}      -- Guarda conexões para atualizar caso o estado mude
+local estadoAtivo = true
+local tamanhoHitbox = 15
+local parteSelecionada = "HEAD" -- "HEAD" ou "TORSO"
+local jogadoresSelecionados = { ["All"] = true }
+local painelAberto = true
 
--- Guarda o tamanho e transparência originais de cada cabeça
-local tamanhosOriginais = {}
-local transparanciasOriginais = {}
+local propriedadesOriginais = {}
 
-local function atualizarCabecaPlayer(player)
-	-- Ignora o próprio jogador local
+-- Função para animação suave
+local function tween(instancia, tempo, propriedades)
+	local info = TweenInfo.new(tempo, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+	local anim = TweenService:Create(instancia, info, propriedades)
+	anim:Play()
+	return anim
+end
+
+-- Pega a parte certa do corpo (Suporta R6 e R15)
+local function obterParteDoCorpo(character, tipoParte)
+	if not character then return nil end
+	if tipoParte == "HEAD" then
+		return character:FindFirstChild("Head")
+	elseif tipoParte == "TORSO" then
+		return character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
+	end
+	return nil
+end
+
+-- Restaura o tamanho original das partes do corpo
+local function restaurarPersonagem(character)
+	if not character then return end
+	for _, part in ipairs(character:GetDescendants()) do
+		if part:IsA("BasePart") and propriedadesOriginais[part] then
+			part.Size = propriedadesOriginais[part].Size
+			part.Transparency = propriedadesOriginais[part].Transparency
+			part.CanCollide = propriedadesOriginais[part].CanCollide
+		end
+	end
+end
+
+-- Atualiza a Hitbox do jogador
+local function atualizarPlayer(player)
 	if player == LocalPlayer then return end
 	
 	local character = player.Character
 	if not character then return end
 	
-	local head = character:WaitForChild("Head", 5)
-	if not head or not head:IsA("BasePart") then return end
+	restaurarPersonagem(character)
 
-	-- Salva os valores originais se ainda não tiver salvado
-	if not tamanhosOriginais[head] then
-		tamanhosOriginais[head] = head.Size
-		transparanciasOriginais[head] = head.Transparency
+	local parteAlvo = obterParteDoCorpo(character, parteSelecionada)
+	if not parteAlvo or not parteAlvo:IsA("BasePart") then return end
+
+	if not propriedadesOriginais[parteAlvo] then
+		propriedadesOriginais[parteAlvo] = {
+			Size = parteAlvo.Size,
+			Transparency = parteAlvo.Transparency,
+			CanCollide = parteAlvo.CanCollide
+		}
 	end
 
-	if estadoAtivo then
-		-- Aplica a Hitbox Gigante
-		head.Size = Vector3.new(15, 15, 15)
-		head.Transparency = 0.6
-		head.CanCollide = false
-		head.Massless = true
-	else
-		-- Restaura o estado normal
-		if tamanhosOriginais[head] then
-			head.Size = tamanhosOriginais[head]
+	local deveAplicar = estadoAtivo and (jogadoresSelecionados["All"] or jogadoresSelecionados[player])
+
+	if deveAplicar then
+		parteAlvo.Size = Vector3.new(tamanhoHitbox, tamanhoHitbox, tamanhoHitbox)
+		parteAlvo.Transparency = 0.6
+		
+		-- Para a parte de HEAD manter original, e para TORÇO não travar
+		if parteSelecionada == "TORSO" then
+			parteAlvo.CanCollide = false
 		end
-		if transparanciasOriginais[head] then
-			head.Transparency = transparanciasOriginais[head]
-		end
-		head.Massless = false
+	end
+end
+
+local function atualizarTodos()
+	for _, player in ipairs(Players:GetPlayers()) do
+		atualizarPlayer(player)
 	end
 end
 
 local function monitorarJogador(player)
 	if player == LocalPlayer then return end
-
+	
 	if player.Character then
 		task.spawn(function()
-			atualizarCabecaPlayer(player)
+			atualizarPlayer(player)
 		end)
 	end
 
-	player.CharacterAdded:Connect(function(character)
-		task.wait(0.1)
-		atualizarCabecaPlayer(player)
+	player.CharacterAdded:Connect(function(char)
+		task.wait(0.3)
+		atualizarPlayer(player)
 	end)
 end
 
--- Monitora todos os jogadores (exceto você)
 for _, player in ipairs(Players:GetPlayers()) do
 	monitorarJogador(player)
 end
@@ -68,53 +106,375 @@ Players.PlayerAdded:Connect(function(player)
 end)
 
 -- =======================================================
--- CRIAÇÃO DA INTERFACE DO BOTÃO (GUI) NO CANTO SUPERIOR ESQUERDO
+-- CRIAÇÃO DA INTERFACE (GUI)
 -- =======================================================
 local playerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- Remove GUI antiga se já existir
-local screenGuiAntiga = playerGui:FindFirstChild("HitboxGui")
+local screenGuiAntiga = playerGui:FindFirstChild("HitboxGuiNeon")
 if screenGuiAntiga then
 	screenGuiAntiga:Destroy()
 end
 
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "HitboxGui"
+screenGui.Name = "HitboxGuiNeon"
 screenGui.ResetOnSpawn = false
+screenGui.DisplayOrder = 999
 screenGui.Parent = playerGui
 
-local botao = Instance.new("TextButton")
-botao.Name = "ToggleHitboxButton"
-botao.Size = UDim2.new(0, 160, 0, 45)
-botao.Position = UDim2.new(0, 15, 0, 15) -- Canto superior esquerdo
-botao.BackgroundColor3 = Color3.fromRGB(35, 140, 35) -- Verde inicial
-botao.TextColor3 = Color3.fromRGB(255, 255, 255)
-botao.TextSize = 14
-botao.Font = Enum.Font.SourceSansBold
-botao.Text = "HEAD HITBOX: ON"
-botao.Parent = screenGui
+local painel = Instance.new("Frame")
+painel.Name = "PainelPrincipal"
+painel.Size = UDim2.new(0, 200, 0, 195)
+painel.Position = UDim2.new(0.05, 0, 0.2, 0)
+painel.BackgroundColor3 = Color3.fromRGB(15, 18, 26)
+painel.BorderSizePixel = 0
+painel.Active = true
+painel.Parent = screenGui
 
--- Arredonda os cantos do botão
-local uiCorner = Instance.new("UICorner")
-uiCorner.CornerRadius = UDim.new(0, 8)
-uiCorner.Parent = botao
+local cornerPainel = Instance.new("UICorner")
+cornerPainel.CornerRadius = UDim.new(0, 8)
+cornerPainel.Parent = painel
 
--- Alterna o estado (ON / OFF) ao clicar
-botao.MouseButton1Click:Connect(function()
-	estadoAtivo = not estadoAtivo
-	
-	if estadoAtivo then
-		botao.Text = "HEAD HITBOX: ON"
-		botao.BackgroundColor3 = Color3.fromRGB(35, 140, 35) -- Verde
+local bordaNeon = Instance.new("UIStroke")
+bordaNeon.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+bordaNeon.Color = Color3.fromRGB(0, 220, 255)
+bordaNeon.Transparency = 0.3
+bordaNeon.Thickness = 1.5
+bordaNeon.Parent = painel
+
+local tituloBarra = Instance.new("TextLabel")
+tituloBarra.Name = "TituloBarra"
+tituloBarra.Size = UDim2.new(1, -30, 0, 30)
+tituloBarra.Position = UDim2.new(0, 0, 0, 0)
+tituloBarra.BackgroundTransparency = 1
+tituloBarra.TextColor3 = Color3.fromRGB(220, 245, 255)
+tituloBarra.TextSize = 12
+tituloBarra.Font = Enum.Font.GothamBold
+tituloBarra.Text = "HITBOX SYSTEM"
+tituloBarra.TextXAlignment = Enum.TextXAlignment.Center
+tituloBarra.Parent = painel
+
+local btnMinimizar = Instance.new("TextButton")
+btnMinimizar.Name = "BtnMinimizar"
+btnMinimizar.Size = UDim2.new(0, 30, 0, 30)
+btnMinimizar.Position = UDim2.new(1, -30, 0, 0)
+btnMinimizar.BackgroundTransparency = 1
+btnMinimizar.TextColor3 = Color3.fromRGB(0, 220, 255)
+btnMinimizar.TextSize = 14
+btnMinimizar.Font = Enum.Font.GothamBold
+btnMinimizar.Text = "^"
+btnMinimizar.Parent = painel
+
+local conteudoFrame = Instance.new("Frame")
+conteudoFrame.Name = "ConteudoFrame"
+conteudoFrame.Size = UDim2.new(1, 0, 1, -30)
+conteudoFrame.Position = UDim2.new(0, 0, 0, 30)
+conteudoFrame.BackgroundTransparency = 1
+conteudoFrame.Parent = painel
+
+-- Arrastar o Painel
+local arrastando, inicioArrasto, posicaoInicial
+
+local function iniciarArrasto(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		arrastando = true
+		inicioArrasto = input.Position
+		posicaoInicial = painel.Position
+
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				arrastando = false
+			end
+		end)
+	end
+end
+
+painel.InputBegan:Connect(iniciarArrasto)
+tituloBarra.InputBegan:Connect(iniciarArrasto)
+
+UserInputService.InputChanged:Connect(function(input)
+	if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and arrastando then
+		local delta = input.Position - inicioArrasto
+		painel.Position = UDim2.new(posicaoInicial.X.Scale, posicaoInicial.X.Offset + delta.X, posicaoInicial.Y.Scale, posicaoInicial.Y.Offset + delta.Y)
+	end
+end)
+
+local botaoToggle = Instance.new("TextButton")
+botaoToggle.Name = "ToggleHitboxButton"
+botaoToggle.Size = UDim2.new(0, 180, 0, 30)
+botaoToggle.Position = UDim2.new(0, 10, 0, 5)
+botaoToggle.BackgroundColor3 = Color3.fromRGB(20, 45, 30)
+botaoToggle.TextColor3 = Color3.fromRGB(0, 255, 150)
+botaoToggle.TextSize = 11
+botaoToggle.Font = Enum.Font.GothamBold
+botaoToggle.Text = "SYSTEM: ONLINE"
+botaoToggle.Parent = conteudoFrame
+
+local cornerToggle = Instance.new("UICorner")
+cornerToggle.CornerRadius = UDim.new(0, 5)
+cornerToggle.Parent = botaoToggle
+
+local caixaTamanho = Instance.new("TextBox")
+caixaTamanho.Name = "TamanhoInput"
+caixaTamanho.Size = UDim2.new(0, 180, 0, 30)
+caixaTamanho.Position = UDim2.new(0, 10, 0, 42)
+caixaTamanho.BackgroundColor3 = Color3.fromRGB(25, 30, 42)
+caixaTamanho.TextColor3 = Color3.fromRGB(200, 230, 255)
+caixaTamanho.TextSize = 11
+caixaTamanho.Font = Enum.Font.GothamMedium
+caixaTamanho.PlaceholderText = "TAMANHO (1 - 1000)"
+caixaTamanho.PlaceholderColor3 = Color3.fromRGB(120, 140, 160)
+caixaTamanho.Text = "15"
+caixaTamanho.Parent = conteudoFrame
+
+local cornerCaixa = Instance.new("UICorner")
+cornerCaixa.CornerRadius = UDim.new(0, 5)
+cornerCaixa.Parent = caixaTamanho
+
+local botaoSeletor = Instance.new("TextButton")
+botaoSeletor.Name = "SelectPlayerButton"
+botaoSeletor.Size = UDim2.new(0, 180, 0, 30)
+botaoSeletor.Position = UDim2.new(0, 10, 0, 79)
+botaoSeletor.BackgroundColor3 = Color3.fromRGB(25, 30, 42)
+botaoSeletor.TextColor3 = Color3.fromRGB(0, 200, 255)
+botaoSeletor.TextSize = 11
+botaoSeletor.Font = Enum.Font.GothamBold
+botaoSeletor.Text = "LISTA DE PLAYERS ▾"
+botaoSeletor.Parent = conteudoFrame
+
+local cornerSeletor = Instance.new("UICorner")
+cornerSeletor.CornerRadius = UDim.new(0, 5)
+cornerSeletor.Parent = botaoSeletor
+
+local listaFrame = Instance.new("ScrollingFrame")
+listaFrame.Name = "ListaJogadores"
+listaFrame.Size = UDim2.new(0, 180, 0, 90)
+listaFrame.Position = UDim2.new(0, 10, 0, 114)
+listaFrame.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
+listaFrame.BorderSizePixel = 0
+listaFrame.Visible = false
+listaFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+listaFrame.ScrollBarThickness = 3
+listaFrame.ZIndex = 5
+listaFrame.Parent = conteudoFrame
+
+local uiListLayout = Instance.new("UIListLayout")
+uiListLayout.Parent = listaFrame
+uiListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+uiListLayout.Padding = UDim.new(0, 2)
+
+uiListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	listaFrame.CanvasSize = UDim2.new(0, 0, 0, uiListLayout.AbsoluteContentSize.Y)
+end)
+
+local botaoTipoHitbox = Instance.new("TextButton")
+botaoTipoHitbox.Name = "SelectHitboxTypeButton"
+botaoTipoHitbox.Size = UDim2.new(0, 180, 0, 30)
+botaoTipoHitbox.Position = UDim2.new(0, 10, 0, 116)
+botaoTipoHitbox.BackgroundColor3 = Color3.fromRGB(25, 30, 42)
+botaoTipoHitbox.TextColor3 = Color3.fromRGB(0, 200, 255)
+botaoTipoHitbox.TextSize = 11
+botaoTipoHitbox.Font = Enum.Font.GothamBold
+botaoTipoHitbox.Text = "Hitbox: HEAD ▾"
+botaoTipoHitbox.Parent = conteudoFrame
+
+local cornerTipo = Instance.new("UICorner")
+cornerTipo.CornerRadius = UDim.new(0, 5)
+cornerTipo.Parent = botaoTipoHitbox
+
+local listaTipoFrame = Instance.new("Frame")
+listaTipoFrame.Name = "ListaTipos"
+listaTipoFrame.Size = UDim2.new(0, 180, 0, 55)
+listaTipoFrame.Position = UDim2.new(0, 10, 0, 150)
+listaTipoFrame.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
+listaTipoFrame.BorderSizePixel = 0
+listaTipoFrame.Visible = false
+listaTipoFrame.ZIndex = 5
+listaTipoFrame.Parent = conteudoFrame
+
+local uiListTipoLayout = Instance.new("UIListLayout")
+uiListTipoLayout.Parent = listaTipoFrame
+uiListTipoLayout.SortOrder = Enum.SortOrder.LayoutOrder
+uiListTipoLayout.Padding = UDim.new(0, 2)
+
+local btnHead = Instance.new("TextButton")
+btnHead.Size = UDim2.new(1, 0, 0, 25)
+btnHead.BackgroundColor3 = Color3.fromRGB(0, 70, 100)
+btnHead.TextColor3 = Color3.fromRGB(0, 220, 255)
+btnHead.TextSize = 10
+btnHead.Font = Enum.Font.GothamBold
+btnHead.Text = "HEAD (CABEÇA)"
+btnHead.ZIndex = 6
+btnHead.Parent = listaTipoFrame
+
+local btnTorso = Instance.new("TextButton")
+btnTorso.Size = UDim2.new(1, 0, 0, 25)
+btnTorso.BackgroundColor3 = Color3.fromRGB(25, 30, 40)
+btnTorso.TextColor3 = Color3.fromRGB(150, 170, 190)
+btnTorso.TextSize = 10
+btnTorso.Font = Enum.Font.GothamBold
+btnTorso.Text = "TORÇO (TRONCO)"
+btnTorso.ZIndex = 6
+btnTorso.Parent = listaTipoFrame
+
+local function recalcularTamanhoPainel()
+	local alturaFinal = 195
+
+	if listaFrame.Visible then
+		alturaFinal = alturaFinal + 95
+		botaoTipoHitbox.Position = UDim2.new(0, 10, 0, 210)
+		listaTipoFrame.Position = UDim2.new(0, 10, 0, 244)
 	else
-		botao.Text = "HEAD HITBOX: OFF"
-		botao.BackgroundColor3 = Color3.fromRGB(180, 40, 40) -- Vermelho
+		botaoTipoHitbox.Position = UDim2.new(0, 10, 0, 116)
+		listaTipoFrame.Position = UDim2.new(0, 10, 0, 150)
 	end
 
-	-- Aplica a alteração para todos os outros jogadores
-	for _, player in ipairs(Players:GetPlayers()) do
-		if player ~= LocalPlayer then
-			atualizarCabecaPlayer(player)
+	if listaTipoFrame.Visible then
+		alturaFinal = alturaFinal + 60
+	end
+
+	if painelAberto then
+		tween(painel, 0.2, {Size = UDim2.new(0, 200, 0, alturaFinal)})
+	end
+end
+
+local function atualizarListaGUI()
+	for _, child in ipairs(listaFrame:GetChildren()) do
+		if child:IsA("TextButton") then
+			child:Destroy()
 		end
 	end
+
+	local isAllSelected = jogadoresSelecionados["All"]
+	local btnAll = Instance.new("TextButton")
+	btnAll.Size = UDim2.new(1, 0, 0, 24)
+	btnAll.BackgroundColor3 = isAllSelected and Color3.fromRGB(0, 80, 60) or Color3.fromRGB(25, 30, 40)
+	btnAll.TextColor3 = isAllSelected and Color3.fromRGB(0, 255, 180) or Color3.fromRGB(150, 170, 190)
+	btnAll.TextSize = 10
+	btnAll.Font = Enum.Font.GothamBold
+	btnAll.Text = (isAllSelected and " [✓] " or " [ ] ") .. "TODOS OS PLAYERS"
+	btnAll.ZIndex = 6
+	btnAll.Parent = listaFrame
+
+	btnAll.MouseButton1Click:Connect(function()
+		if jogadoresSelecionados["All"] then
+			jogadoresSelecionados["All"] = nil
+		else
+			jogadoresSelecionados = { ["All"] = true }
+		end
+		atualizarListaGUI()
+		atualizarTodos()
+	end)
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer then
+			local isSelected = jogadoresSelecionados[player] or (jogadoresSelecionados["All"])
+			local btnPlayer = Instance.new("TextButton")
+			btnPlayer.Size = UDim2.new(1, 0, 0, 24)
+			btnPlayer.BackgroundColor3 = isSelected and Color3.fromRGB(0, 60, 90) or Color3.fromRGB(25, 30, 40)
+			btnPlayer.TextColor3 = isSelected and Color3.fromRGB(0, 220, 255) or Color3.fromRGB(150, 170, 190)
+			btnPlayer.TextSize = 10
+			btnPlayer.Font = Enum.Font.Gotham
+			btnPlayer.Text = (isSelected and " [✓] " or " [ ] ") .. player.DisplayName
+			btnPlayer.ZIndex = 6
+			btnPlayer.Parent = listaFrame
+
+			btnPlayer.MouseButton1Click:Connect(function()
+				if jogadoresSelecionados["All"] then
+					jogadoresSelecionados["All"] = nil
+					for _, p in ipairs(Players:GetPlayers()) do
+						if p ~= LocalPlayer then
+							jogadoresSelecionados[p] = true
+						end
+					end
+				end
+
+				jogadoresSelecionados[player] = not jogadoresSelecionados[player] or nil
+				atualizarListaGUI()
+				atualizarTodos()
+			end)
+		end
+	end
+end
+
+btnHead.MouseButton1Click:Connect(function()
+	parteSelecionada = "HEAD"
+	botaoTipoHitbox.Text = "Hitbox: HEAD ▾"
+	btnHead.BackgroundColor3 = Color3.fromRGB(0, 70, 100)
+	btnHead.TextColor3 = Color3.fromRGB(0, 220, 255)
+	btnTorso.BackgroundColor3 = Color3.fromRGB(25, 30, 40)
+	btnTorso.TextColor3 = Color3.fromRGB(150, 170, 190)
+	listaTipoFrame.Visible = false
+	recalcularTamanhoPainel()
+	atualizarTodos()
+end)
+
+btnTorso.MouseButton1Click:Connect(function()
+	parteSelecionada = "TORSO"
+	botaoTipoHitbox.Text = "Hitbox: TORÇO ▾"
+	btnTorso.BackgroundColor3 = Color3.fromRGB(0, 70, 100)
+	btnTorso.TextColor3 = Color3.fromRGB(0, 220, 255)
+	btnHead.BackgroundColor3 = Color3.fromRGB(25, 30, 40)
+	btnHead.TextColor3 = Color3.fromRGB(150, 170, 190)
+	listaTipoFrame.Visible = false
+	recalcularTamanhoPainel()
+	atualizarTodos()
+end)
+
+botaoSeletor.MouseButton1Click:Connect(function()
+	listaFrame.Visible = not listaFrame.Visible
+	botaoSeletor.Text = listaFrame.Visible and "LISTA DE PLAYERS ▴" or "LISTA DE PLAYERS ▾"
+	if listaFrame.Visible then
+		atualizarListaGUI()
+	end
+	recalcularTamanhoPainel()
+end)
+
+botaoTipoHitbox.MouseButton1Click:Connect(function()
+	listaTipoFrame.Visible = not listaTipoFrame.Visible
+	botaoTipoHitbox.Text = listaTipoFrame.Visible and "Selecione Hitbox ▴" or "Selecione Hitbox ▾"
+	recalcularTamanhoPainel()
+end)
+
+botaoToggle.MouseButton1Click:Connect(function()
+	estadoAtivo = not estadoAtivo
+	if estadoAtivo then
+		botaoToggle.Text = "SYSTEM: ONLINE"
+		botaoToggle.BackgroundColor3 = Color3.fromRGB(20, 45, 30)
+		botaoToggle.TextColor3 = Color3.fromRGB(0, 255, 150)
+	else
+		botaoToggle.Text = "SYSTEM: OFFLINE"
+		botaoToggle.BackgroundColor3 = Color3.fromRGB(45, 20, 25)
+		botaoToggle.TextColor3 = Color3.fromRGB(255, 60, 80)
+	end
+	atualizarTodos()
+end)
+
+caixaTamanho.FocusLost:Connect(function()
+	local num = tonumber(caixaTamanho.Text)
+	if num then
+		num = math.clamp(num, 1, 1000)
+		tamanhoHitbox = num
+		caixaTamanho.Text = tostring(num)
+		atualizarTodos()
+	else
+		caixaTamanho.Text = tostring(tamanhoHitbox)
+	end
+end)
+
+btnMinimizar.MouseButton1Click:Connect(function()
+	painelAberto = not painelAberto
+	if painelAberto then
+		btnMinimizar.Text = "^"
+		conteudoFrame.Visible = true
+		recalcularTamanhoPainel()
+	else
+		btnMinimizar.Text = "v"
+		conteudoFrame.Visible = false
+		tween(painel, 0.2, {Size = UDim2.new(0, 200, 0, 30)})
+	end
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	jogadoresSelecionados[player] = nil
+	atualizarTodos()
 end)
