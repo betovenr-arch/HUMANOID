@@ -4,15 +4,41 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 
+-- =======================================================
+-- LIMPEZA E CONTROLE DE EXECUÇÃO ÚNICA (RE-EXECUTION CLEANUP)
+-- =======================================================
+local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+local screenGuiAntiga = playerGui:FindFirstChild("HitboxGuiNeon")
+if screenGuiAntiga then
+	screenGuiAntiga:Destroy()
+end
+
+if _G.HitboxCleanup then
+	_G.HitboxCleanup()
+end
+
+local conexoes = {}
+_G.HitboxCleanup = function()
+	for _, conn in ipairs(conexoes) do
+		if conn and conn.Connected then
+			conn:Disconnect()
+		end
+	end
+	conexoes = {}
+end
+
+-- =======================================================
+-- CONFIGURAÇÕES E ESTADOS
+-- =======================================================
 local estadoAtivo = true
 local tamanhoHitbox = 15
-local parteSelecionada = "HEAD" -- "HEAD" ou "TORSO"
 local jogadoresSelecionados = { ["All"] = true }
 local painelAberto = true
 
 local propriedadesOriginais = {}
+local aderecosArmazenados = {}
 
--- Função para animação suave
 local function tween(instancia, tempo, propriedades)
 	local info = TweenInfo.new(tempo, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 	local anim = TweenService:Create(instancia, info, propriedades)
@@ -20,30 +46,35 @@ local function tween(instancia, tempo, propriedades)
 	return anim
 end
 
--- Pega a parte certa do corpo (Suporta R6 e R15)
-local function obterParteDoCorpo(character, tipoParte)
+local function obterParteDoCorpo(character)
 	if not character then return nil end
-	if tipoParte == "HEAD" then
-		return character:FindFirstChild("Head")
-	elseif tipoParte == "TORSO" then
-		return character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
-	end
-	return nil
+	return character:FindFirstChild("Head")
 end
 
--- Restaura o tamanho original das partes do corpo
 local function restaurarPersonagem(character)
 	if not character then return end
+	
 	for _, part in ipairs(character:GetDescendants()) do
 		if part:IsA("BasePart") and propriedadesOriginais[part] then
 			part.Size = propriedadesOriginais[part].Size
 			part.Transparency = propriedadesOriginais[part].Transparency
 			part.CanCollide = propriedadesOriginais[part].CanCollide
+			part.Massless = propriedadesOriginais[part].Massless
+		end
+	end
+
+	if aderecosArmazenados[character] then
+		for _, acc in ipairs(aderecosArmazenados[character]) do
+			if acc and acc.Parent then
+				local handle = acc:FindFirstChild("Handle")
+				if handle then
+					handle.CanCollide = false
+				end
+			end
 		end
 	end
 end
 
--- Atualiza a Hitbox do jogador
 local function atualizarPlayer(player)
 	if player == LocalPlayer then return end
 	
@@ -52,27 +83,41 @@ local function atualizarPlayer(player)
 	
 	restaurarPersonagem(character)
 
-	local parteAlvo = obterParteDoCorpo(character, parteSelecionada)
+	local parteAlvo = obterParteDoCorpo(character)
 	if not parteAlvo or not parteAlvo:IsA("BasePart") then return end
 
 	if not propriedadesOriginais[parteAlvo] then
 		propriedadesOriginais[parteAlvo] = {
 			Size = parteAlvo.Size,
 			Transparency = parteAlvo.Transparency,
-			CanCollide = parteAlvo.CanCollide
+			CanCollide = parteAlvo.CanCollide,
+			Massless = parteAlvo.Massless
 		}
 	end
 
 	local deveAplicar = estadoAtivo and (jogadoresSelecionados["All"] or jogadoresSelecionados[player])
 
 	if deveAplicar then
+		if not aderecosArmazenados[character] then
+			aderecosArmazenados[character] = {}
+			for _, item in ipairs(character:GetChildren()) do
+				if item:IsA("Accessory") then
+					table.insert(aderecosArmazenados[character], item)
+				end
+			end
+		end
+
+		for _, acc in ipairs(aderecosArmazenados[character]) do
+			local handle = acc:FindFirstChild("Handle")
+			if handle then
+				handle.CanCollide = false
+			end
+		end
+
 		parteAlvo.Size = Vector3.new(tamanhoHitbox, tamanhoHitbox, tamanhoHitbox)
 		parteAlvo.Transparency = 0.6
-		
-		-- Para a parte de HEAD manter original, e para TORÇO não travar
-		if parteSelecionada == "TORSO" then
-			parteAlvo.CanCollide = false
-		end
+		parteAlvo.CanCollide = false
+		parteAlvo.Massless = true
 	end
 end
 
@@ -91,30 +136,26 @@ local function monitorarJogador(player)
 		end)
 	end
 
-	player.CharacterAdded:Connect(function(char)
+	local connChar = player.CharacterAdded:Connect(function(char)
+		aderecosArmazenados[char] = nil
 		task.wait(0.3)
 		atualizarPlayer(player)
 	end)
+	table.insert(conexoes, connChar)
 end
 
 for _, player in ipairs(Players:GetPlayers()) do
 	monitorarJogador(player)
 end
 
-Players.PlayerAdded:Connect(function(player)
+local connPlayerAdded = Players.PlayerAdded:Connect(function(player)
 	monitorarJogador(player)
 end)
+table.insert(conexoes, connPlayerAdded)
 
 -- =======================================================
 -- CRIAÇÃO DA INTERFACE (GUI)
 -- =======================================================
-local playerGui = LocalPlayer:WaitForChild("PlayerGui")
-
-local screenGuiAntiga = playerGui:FindFirstChild("HitboxGuiNeon")
-if screenGuiAntiga then
-	screenGuiAntiga:Destroy()
-end
-
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "HitboxGuiNeon"
 screenGui.ResetOnSpawn = false
@@ -123,7 +164,7 @@ screenGui.Parent = playerGui
 
 local painel = Instance.new("Frame")
 painel.Name = "PainelPrincipal"
-painel.Size = UDim2.new(0, 200, 0, 195)
+painel.Size = UDim2.new(0, 200, 0, 155)
 painel.Position = UDim2.new(0.05, 0, 0.2, 0)
 painel.BackgroundColor3 = Color3.fromRGB(15, 18, 26)
 painel.BorderSizePixel = 0
@@ -171,7 +212,6 @@ conteudoFrame.Position = UDim2.new(0, 0, 0, 30)
 conteudoFrame.BackgroundTransparency = 1
 conteudoFrame.Parent = painel
 
--- Arrastar o Painel
 local arrastando, inicioArrasto, posicaoInicial
 
 local function iniciarArrasto(input)
@@ -180,9 +220,11 @@ local function iniciarArrasto(input)
 		inicioArrasto = input.Position
 		posicaoInicial = painel.Position
 
-		input.Changed:Connect(function()
+		local connEnd
+		connEnd = input.Changed:Connect(function()
 			if input.UserInputState == Enum.UserInputState.End then
 				arrastando = false
+				if connEnd then connEnd:Disconnect() end
 			end
 		end)
 	end
@@ -191,12 +233,13 @@ end
 painel.InputBegan:Connect(iniciarArrasto)
 tituloBarra.InputBegan:Connect(iniciarArrasto)
 
-UserInputService.InputChanged:Connect(function(input)
+local connDrag = UserInputService.InputChanged:Connect(function(input)
 	if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and arrastando then
 		local delta = input.Position - inicioArrasto
 		painel.Position = UDim2.new(posicaoInicial.X.Scale, posicaoInicial.X.Offset + delta.X, posicaoInicial.Y.Scale, posicaoInicial.Y.Offset + delta.Y)
 	end
 end)
+table.insert(conexoes, connDrag)
 
 local botaoToggle = Instance.new("TextButton")
 botaoToggle.Name = "ToggleHitboxButton"
@@ -266,70 +309,11 @@ uiListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 	listaFrame.CanvasSize = UDim2.new(0, 0, 0, uiListLayout.AbsoluteContentSize.Y)
 end)
 
-local botaoTipoHitbox = Instance.new("TextButton")
-botaoTipoHitbox.Name = "SelectHitboxTypeButton"
-botaoTipoHitbox.Size = UDim2.new(0, 180, 0, 30)
-botaoTipoHitbox.Position = UDim2.new(0, 10, 0, 116)
-botaoTipoHitbox.BackgroundColor3 = Color3.fromRGB(25, 30, 42)
-botaoTipoHitbox.TextColor3 = Color3.fromRGB(0, 200, 255)
-botaoTipoHitbox.TextSize = 11
-botaoTipoHitbox.Font = Enum.Font.GothamBold
-botaoTipoHitbox.Text = "Hitbox: HEAD ▾"
-botaoTipoHitbox.Parent = conteudoFrame
-
-local cornerTipo = Instance.new("UICorner")
-cornerTipo.CornerRadius = UDim.new(0, 5)
-cornerTipo.Parent = botaoTipoHitbox
-
-local listaTipoFrame = Instance.new("Frame")
-listaTipoFrame.Name = "ListaTipos"
-listaTipoFrame.Size = UDim2.new(0, 180, 0, 55)
-listaTipoFrame.Position = UDim2.new(0, 10, 0, 150)
-listaTipoFrame.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
-listaTipoFrame.BorderSizePixel = 0
-listaTipoFrame.Visible = false
-listaTipoFrame.ZIndex = 5
-listaTipoFrame.Parent = conteudoFrame
-
-local uiListTipoLayout = Instance.new("UIListLayout")
-uiListTipoLayout.Parent = listaTipoFrame
-uiListTipoLayout.SortOrder = Enum.SortOrder.LayoutOrder
-uiListTipoLayout.Padding = UDim.new(0, 2)
-
-local btnHead = Instance.new("TextButton")
-btnHead.Size = UDim2.new(1, 0, 0, 25)
-btnHead.BackgroundColor3 = Color3.fromRGB(0, 70, 100)
-btnHead.TextColor3 = Color3.fromRGB(0, 220, 255)
-btnHead.TextSize = 10
-btnHead.Font = Enum.Font.GothamBold
-btnHead.Text = "HEAD (CABEÇA)"
-btnHead.ZIndex = 6
-btnHead.Parent = listaTipoFrame
-
-local btnTorso = Instance.new("TextButton")
-btnTorso.Size = UDim2.new(1, 0, 0, 25)
-btnTorso.BackgroundColor3 = Color3.fromRGB(25, 30, 40)
-btnTorso.TextColor3 = Color3.fromRGB(150, 170, 190)
-btnTorso.TextSize = 10
-btnTorso.Font = Enum.Font.GothamBold
-btnTorso.Text = "TORÇO (TRONCO)"
-btnTorso.ZIndex = 6
-btnTorso.Parent = listaTipoFrame
-
 local function recalcularTamanhoPainel()
-	local alturaFinal = 195
+	local alturaFinal = 125
 
 	if listaFrame.Visible then
 		alturaFinal = alturaFinal + 95
-		botaoTipoHitbox.Position = UDim2.new(0, 10, 0, 210)
-		listaTipoFrame.Position = UDim2.new(0, 10, 0, 244)
-	else
-		botaoTipoHitbox.Position = UDim2.new(0, 10, 0, 116)
-		listaTipoFrame.Position = UDim2.new(0, 10, 0, 150)
-	end
-
-	if listaTipoFrame.Visible then
-		alturaFinal = alturaFinal + 60
 	end
 
 	if painelAberto then
@@ -396,42 +380,12 @@ local function atualizarListaGUI()
 	end
 end
 
-btnHead.MouseButton1Click:Connect(function()
-	parteSelecionada = "HEAD"
-	botaoTipoHitbox.Text = "Hitbox: HEAD ▾"
-	btnHead.BackgroundColor3 = Color3.fromRGB(0, 70, 100)
-	btnHead.TextColor3 = Color3.fromRGB(0, 220, 255)
-	btnTorso.BackgroundColor3 = Color3.fromRGB(25, 30, 40)
-	btnTorso.TextColor3 = Color3.fromRGB(150, 170, 190)
-	listaTipoFrame.Visible = false
-	recalcularTamanhoPainel()
-	atualizarTodos()
-end)
-
-btnTorso.MouseButton1Click:Connect(function()
-	parteSelecionada = "TORSO"
-	botaoTipoHitbox.Text = "Hitbox: TORÇO ▾"
-	btnTorso.BackgroundColor3 = Color3.fromRGB(0, 70, 100)
-	btnTorso.TextColor3 = Color3.fromRGB(0, 220, 255)
-	btnHead.BackgroundColor3 = Color3.fromRGB(25, 30, 40)
-	btnHead.TextColor3 = Color3.fromRGB(150, 170, 190)
-	listaTipoFrame.Visible = false
-	recalcularTamanhoPainel()
-	atualizarTodos()
-end)
-
 botaoSeletor.MouseButton1Click:Connect(function()
 	listaFrame.Visible = not listaFrame.Visible
 	botaoSeletor.Text = listaFrame.Visible and "LISTA DE PLAYERS ▴" or "LISTA DE PLAYERS ▾"
 	if listaFrame.Visible then
 		atualizarListaGUI()
 	end
-	recalcularTamanhoPainel()
-end)
-
-botaoTipoHitbox.MouseButton1Click:Connect(function()
-	listaTipoFrame.Visible = not listaTipoFrame.Visible
-	botaoTipoHitbox.Text = listaTipoFrame.Visible and "Selecione Hitbox ▴" or "Selecione Hitbox ▾"
 	recalcularTamanhoPainel()
 end)
 
@@ -474,7 +428,10 @@ btnMinimizar.MouseButton1Click:Connect(function()
 	end
 end)
 
-Players.PlayerRemoving:Connect(function(player)
+local connRemoving = Players.PlayerRemoving:Connect(function(player)
 	jogadoresSelecionados[player] = nil
 	atualizarTodos()
 end)
+table.insert(conexoes, connRemoving)
+
+atualizarTodos()
